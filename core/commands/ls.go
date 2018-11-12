@@ -37,8 +37,8 @@ type LsObject struct {
 // LsOutput is a set of printable data for directories,
 // it can be complete or partial
 type LsOutput struct {
-	Objects              []LsObject
-	LastDirectoryWritten int
+	Objects        []LsObject
+	LastObjectHash string
 }
 
 const (
@@ -111,7 +111,7 @@ The JSON output contains type information.
 		ro := merkledag.NewReadOnlyDagService(ng)
 
 		stream, _ := req.Options[lsStreamOptionName].(bool)
-		lastDirectoryWritten := -1
+		lastObjectHash := ""
 
 		if !stream {
 			output := make([]LsObject, len(req.Arguments))
@@ -145,7 +145,7 @@ The JSON output contains type information.
 				}
 			}
 
-			return cmds.EmitOnce(res, &LsOutput{output, lastDirectoryWritten})
+			return cmds.EmitOnce(res, &LsOutput{output, lastObjectHash})
 		}
 
 		for i, dagnode := range dagnodes {
@@ -162,14 +162,6 @@ The JSON output contains type information.
 			}
 
 			for linkResult := range linkResults {
-				output := make([]LsObject, len(req.Arguments))
-
-				for j, path := range paths {
-					output[j] = LsObject{
-						Hash:  path,
-						Links: nil,
-					}
-				}
 
 				if linkResult.Err != nil {
 					return linkResult.Err
@@ -179,11 +171,16 @@ The JSON output contains type information.
 				if err != nil {
 					return err
 				}
-				output[i].Links = []LsLink{*lsLink}
-				if err = res.Emit(&LsOutput{output, lastDirectoryWritten}); err != nil {
+				output := []LsObject{
+					{
+						Hash:  paths[i],
+						Links: []LsLink{*lsLink},
+					},
+				}
+				if err = res.Emit(&LsOutput{output, lastObjectHash}); err != nil {
 					return err
 				}
-				lastDirectoryWritten = i
+				lastObjectHash = paths[i]
 			}
 		}
 		return nil
@@ -202,18 +199,15 @@ The JSON output contains type information.
 			}
 
 			multipleFolders := len(req.Arguments) > 1
-			lastDirectoryWritten := out.LastDirectoryWritten
+			lastObjectHash := out.LastObjectHash
 
 			tw := tabwriter.NewWriter(w, minTabWidth, 2, 1, ' ', 0)
 
-			for i, object := range out.Objects {
-				if len(object.Links) == 0 {
-					continue
-				}
+			for _, object := range out.Objects {
 
-				if i > lastDirectoryWritten {
+				if object.Hash != lastObjectHash {
 					if multipleFolders {
-						if i > 0 {
+						if lastObjectHash != "" {
 							fmt.Fprintln(tw)
 						}
 						fmt.Fprintf(tw, "%s:\n", object.Hash)
@@ -221,7 +215,7 @@ The JSON output contains type information.
 					if headers {
 						fmt.Fprintln(tw, "Hash\tSize\tName")
 					}
-					lastDirectoryWritten = i
+					lastObjectHash = object.Hash
 				}
 
 				for _, link := range object.Links {
